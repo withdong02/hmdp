@@ -10,8 +10,11 @@ import com.hmdp.service.IShopService;
 import jakarta.annotation.Resource;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
-import static com.hmdp.utils.RedisConstants.CACHE_SHOP_KEY;
+import java.util.concurrent.TimeUnit;
+
+import static com.hmdp.utils.RedisConstants.*;
 
 /**
  * <p>
@@ -36,12 +39,32 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
             Shop shop = JSONUtil.toBean(str, Shop.class);
             return Result.ok(shop);
         }
+        //现在可能有下面三种情况1.不为null; 2.不为空字符串; 3.不为空格、全角空格、制表符、换行符，等不可见字符
+        if (str != null) {
+            //排除了1，还得考虑2
+            //缓存空值的策略，用于防止缓存穿透
+            return Result.fail("店铺不存在");
+        }
         Shop shop = this.getById(id);
         if (shop == null) {
+            //返回错误信息的同时将空值写入redis
+            stringRedisTemplate.opsForValue().set(key, "", CACHE_NULL_TTL, TimeUnit.MINUTES);
             return Result.fail("店铺不存在！");
         }
-        stringRedisTemplate.opsForValue().set(key, JSONUtil.toJsonStr(shop));
-
+        stringRedisTemplate.opsForValue().set(key, JSONUtil.toJsonStr(shop), CACHE_SHOP_TTL, TimeUnit.MINUTES);
         return Result.ok(shop);
+    }
+
+    @Transactional
+    @Override
+    public Result update(Shop shop) {
+        Long id = shop.getId();
+        if (id == null) {
+            return Result.fail("店铺id不能为空");
+        }
+        //先更新数据库，再删除缓存
+        this.updateById(shop);
+        stringRedisTemplate.delete(CACHE_SHOP_KEY + id);
+        return Result.ok();
     }
 }
