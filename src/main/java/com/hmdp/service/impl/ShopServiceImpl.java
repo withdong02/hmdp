@@ -1,12 +1,11 @@
 package com.hmdp.service.impl;
 
-import cn.hutool.core.util.StrUtil;
-import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
 import com.hmdp.dto.Result;
 import com.hmdp.entity.Shop;
 import com.hmdp.mapper.ShopMapper;
 import com.hmdp.service.IShopService;
+import com.hmdp.utils.CacheClient;
 import jakarta.annotation.Resource;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
@@ -14,7 +13,8 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.util.concurrent.TimeUnit;
 
-import static com.hmdp.utils.RedisConstants.*;
+import static com.hmdp.utils.RedisConstants.CACHE_SHOP_KEY;
+import static com.hmdp.utils.RedisConstants.CACHE_SHOP_TTL;
 
 /**
  * <p>
@@ -30,29 +30,18 @@ public class ShopServiceImpl extends ServiceImpl<ShopMapper, Shop> implements IS
     @Resource
     private StringRedisTemplate stringRedisTemplate;
 
+    @Resource
+    private CacheClient cacheClient;
+
     @Override
     public Result queryById(Long id) {
-        //查询redis
-        String key = CACHE_SHOP_KEY + id;
-        String str = stringRedisTemplate.opsForValue().get(key);
-        if (StrUtil.isNotBlank(str)) {
-            Shop shop = JSONUtil.toBean(str, Shop.class);
-            return Result.ok(shop);
-        }
-        //现在可能有下面三种情况1.不为null; 2.不为空字符串; 3.不为空格、全角空格、制表符、换行符，等不可见字符
-        if (str != null) {
-            //排除了1，还得考虑2
-            //缓存空值的策略，用于防止缓存穿透
-            return Result.fail("店铺不存在");
-        }
-        Shop shop = this.getById(id);
+        Shop shop = cacheClient.queryWithPassThrough(CACHE_SHOP_KEY, id, Shop.class, this::getById, CACHE_SHOP_TTL,
+                TimeUnit.MINUTES);
         if (shop == null) {
-            //返回错误信息的同时将空值写入redis
-            stringRedisTemplate.opsForValue().set(key, "", CACHE_NULL_TTL, TimeUnit.MINUTES);
             return Result.fail("店铺不存在！");
         }
-        stringRedisTemplate.opsForValue().set(key, JSONUtil.toJsonStr(shop), CACHE_SHOP_TTL, TimeUnit.MINUTES);
         return Result.ok(shop);
+
     }
 
     @Transactional
